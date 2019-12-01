@@ -34,6 +34,7 @@
 
 #include <libcork/core.h>
 #include <libcork/os.h>
+#include <strings.h>
 
 #include "utils.h"
 #include "plugin.h"

@@ -92,9 +92,11 @@ int is_remote_dns = 1; // resolve hostname remotely
 char *stat_path = NULL;
 #endif
 
+#ifndef SS_NG
 static crypto_t *crypto;
 
 static int acl       = 0;
+#endif
 static int mode      = TCP_ONLY;
 static int ipv6first = 0;
        int fast_open = 0;
@@ -380,7 +382,11 @@ server_handshake(EV_P_ ev_io *w, buffer_t *buf)
         memcpy(abuf->data + abuf->len, buf->data + request_len, in_addr_len + 2);
         abuf->len += in_addr_len + 2;
 
+#ifdef SS_NG
+        if (verbose) {
+#else
         if (acl || verbose) {
+#endif
             uint16_t p = ntohs(*(uint16_t *)(buf->data + request_len + in_addr_len));
             if (!inet_ntop(AF_INET, (const void *)(buf->data + request_len),
                            ip, INET_ADDRSTRLEN)) {
@@ -398,7 +404,11 @@ server_handshake(EV_P_ ev_io *w, buffer_t *buf)
         memcpy(abuf->data + abuf->len, buf->data + request_len + 1, name_len + 2);
         abuf->len += name_len + 2;
 
+#ifdef SS_NG
+        if (verbose) {
+#else
         if (acl || verbose) {
+#endif
             uint16_t p =
                 ntohs(*(uint16_t *)(buf->data + request_len + 1 + name_len));
             memcpy(host, buf->data + request_len + 1, name_len);
@@ -413,7 +423,11 @@ server_handshake(EV_P_ ev_io *w, buffer_t *buf)
         memcpy(abuf->data + abuf->len, buf->data + request_len, in6_addr_len + 2);
         abuf->len += in6_addr_len + 2;
 
+#ifdef SS_NG
+        if (verbose) {
+#else
         if (acl || verbose) {
+#endif
             uint16_t p = ntohs(*(uint16_t *)(buf->data + request_len + in6_addr_len));
             if (!inet_ntop(AF_INET6, (const void *)(buf->data + request_len),
                            ip, INET6_ADDRSTRLEN)) {
@@ -434,6 +448,7 @@ server_handshake(EV_P_ ev_io *w, buffer_t *buf)
 
     size_t abuf_len  = abuf->len;
     int sni_detected = 0;
+#ifndef SS_NG
     int hostname_len = 0;
 
     char *hostname;
@@ -454,7 +469,11 @@ server_handshake(EV_P_ ev_io *w, buffer_t *buf)
             return -1;
         } else if (hostname_len > 0) {
             sni_detected = 1;
+#ifdef SS_NG
+            if (verbose) {
+#else
             if (acl || verbose) {
+#endif
                 hostname_len = hostname_len > MAX_HOSTNAME_LEN ? MAX_HOSTNAME_LEN : hostname_len;
                 memcpy(host, hostname, hostname_len);
                 host[hostname_len] = '\0';
@@ -462,6 +481,7 @@ server_handshake(EV_P_ ev_io *w, buffer_t *buf)
             ss_free(hostname);
         }
     }
+#endif
 
     if (server_handshake_reply(EV_A_ w, 0, &response) < 0)
         return -1;
@@ -481,6 +501,7 @@ server_handshake(EV_P_ ev_io *w, buffer_t *buf)
             LOGI("connect to [%s]:%s", ip, port);
     }
 
+#ifndef SS_NG
     if (acl
 #ifdef __ANDROID__
         && !(vpn && strcmp(port, "53") == 0)
@@ -590,6 +611,36 @@ not_bypass:
             abuf->len += 2;
         }
     }
+#else
+
+    int skip_len = 0;
+    char name[4 * (256 / 3) + 1], *proxy_host = "", *proxy_port = "", *method = "", *password = "",
+    *obfs = "", *obfs_host = "";
+
+    //name
+    uint8_t slen = *(uint8_t *)(buf->data + skip_len);
+    memcpy(name, buf->data + skip_len + 1, slen);
+    name[slen] = '\0';
+    skip_len += 1 + slen;
+
+    get_ss_proxy_info(name, &proxy_host, &proxy_port, &method, &password, &obfs, &obfs_host);
+
+    buf->len -= skip_len;
+    memmove(buf->data, buf->data + skip_len, buf->len);
+
+    struct sockaddr_storage storage;
+    memset(&storage, 0, sizeof(struct sockaddr_storage));
+    if (get_sockaddr(proxy_host, proxy_port, &storage, 0, ipv6first) != -1) {
+        remote = create_remote(server->listener, (struct sockaddr *)&storage, 0);
+    }
+
+    crypto_t *crypto = crypto_init(password, NULL, method);
+    server->crypto = crypto;
+    server->e_ctx = ss_malloc(sizeof(cipher_ctx_t));
+    server->d_ctx = ss_malloc(sizeof(cipher_ctx_t));
+    crypto->ctx_init(crypto->cipher, server->e_ctx, 1);
+    crypto->ctx_init(crypto->cipher, server->d_ctx, 0);
+#endif
 
     if (remote == NULL) {
         LOGE("invalid remote addr");
@@ -641,6 +692,9 @@ server_stream(EV_P_ ev_io *w, buffer_t *buf)
     if (!remote->direct) {
 #ifdef __ANDROID__
         tx += remote->buf->len;
+#endif
+#ifdef SS_NG
+        crypto_t *crypto = server->crypto;
 #endif
         int err = crypto->encrypt(remote->buf, server->e_ctx, SOCKET_BUF_SIZE);
 
@@ -1029,6 +1083,9 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
         rx += server->buf->len;
         stat_update_cb();
 #endif
+#ifdef SS_NG
+        crypto_t *crypto = server->crypto;
+#endif
         int err = crypto->decrypt(server->buf, server->d_ctx, SOCKET_BUF_SIZE);
         if (err == CRYPTO_ERROR) {
             LOGE("invalid password or cipher");
@@ -1242,10 +1299,12 @@ new_server(int fd)
     server->recv_ctx->server    = server;
     server->send_ctx->server    = server;
 
+#ifndef SS_NG
     server->e_ctx = ss_malloc(sizeof(cipher_ctx_t));
     server->d_ctx = ss_malloc(sizeof(cipher_ctx_t));
     crypto->ctx_init(crypto->cipher, server->e_ctx, 1);
     crypto->ctx_init(crypto->cipher, server->d_ctx, 0);
+#endif
 
     ev_io_init(&server->recv_ctx->io, server_recv_cb, fd, EV_READ);
     ev_io_init(&server->send_ctx->io, server_send_cb, fd, EV_WRITE);
@@ -1262,6 +1321,9 @@ static void
 free_server(server_t *server)
 {
     cork_dllist_remove(&server->entries);
+#ifdef SS_NG
+    crypto_t *crypto = server->crypto;
+#endif
 
     if (server->remote != NULL) {
         server->remote->server = NULL;
@@ -1274,6 +1336,9 @@ free_server(server_t *server)
         crypto->ctx_release(server->d_ctx);
         ss_free(server->d_ctx);
     }
+#ifdef SS_NG
+    ss_free(crypto);
+#endif
     if (server->buf != NULL) {
         bfree(server->buf);
         ss_free(server->buf);
@@ -1306,12 +1371,16 @@ create_remote(listen_ctx_t *listener,
 {
     struct sockaddr *remote_addr;
 
+#ifndef SS_NG
     int index = rand() % listener->remote_num;
     if (addr == NULL) {
         remote_addr = listener->remote_addr[index];
     } else {
+#endif
         remote_addr = addr;
+#ifndef SS_NG
     }
+#endif
 
     int remotefd = socket(remote_addr->sa_family, SOCK_STREAM, IPPROTO_TCP);
 
@@ -1447,12 +1516,18 @@ main(int argc, char **argv)
     char *user       = NULL;
     char *local_port = NULL;
     char *local_addr = NULL;
+#ifndef SS_NG
     char *password   = NULL;
     char *key        = NULL;
+#endif
     char *timeout    = NULL;
+#ifndef SS_NG
     char *method     = NULL;
+#endif
     char *pid_path   = NULL;
+#ifndef SS_NG
     char *conf_path  = NULL;
+#endif
     char *iface      = NULL;
 
     char *plugin      = NULL;
@@ -1461,11 +1536,13 @@ main(int argc, char **argv)
     char *plugin_port = NULL;
     char tmp_port[8];
 
+#ifndef SS_NG
     int remote_num = 0;
     ss_addr_t remote_addr[MAX_REMOTE_NUM];
     char *remote_port = NULL;
 
     memset(remote_addr, 0, sizeof(ss_addr_t) * MAX_REMOTE_NUM);
+#endif
     srand(time(NULL));
 
     static struct option long_options[] = {
@@ -1494,14 +1571,16 @@ main(int argc, char **argv)
     while ((c = getopt_long(argc, argv, "f:s:p:l:k:t:m:i:c:b:a:n:huUv6A",
                             long_options, NULL)) != -1) {
 #endif
-        switch (c) {
+    switch (c) {
         case GETOPT_VAL_FAST_OPEN:
             fast_open = 1;
             break;
+#ifndef SS_NG
         case GETOPT_VAL_ACL:
             LOGI("initializing acl...");
             acl = !init_acl(optarg);
             break;
+#endif
         case GETOPT_VAL_MTU:
             mtu = atoi(optarg);
             LOGI("set MTU to %d", mtu);
@@ -1514,6 +1593,7 @@ main(int argc, char **argv)
             no_delay = 1;
             LOGI("enable TCP no-delay");
             break;
+#ifndef SS_NG
         case GETOPT_VAL_PLUGIN:
             plugin = optarg;
             break;
@@ -1523,9 +1603,11 @@ main(int argc, char **argv)
         case GETOPT_VAL_KEY:
             key = optarg;
             break;
+#endif
         case GETOPT_VAL_REUSE_PORT:
             reuse_port = 1;
             break;
+#ifndef SS_NG
         case 's':
             if (remote_num < MAX_REMOTE_NUM) {
                 parse_addr(optarg, &remote_addr[remote_num++]);
@@ -1534,13 +1616,16 @@ main(int argc, char **argv)
         case 'p':
             remote_port = optarg;
             break;
+#endif
         case 'l':
             local_port = optarg;
             break;
         case GETOPT_VAL_PASSWORD:
+#ifndef SS_NG
         case 'k':
             password = optarg;
             break;
+#endif
         case 'f':
             pid_flags = 1;
             pid_path  = optarg;
@@ -1548,12 +1633,14 @@ main(int argc, char **argv)
         case 't':
             timeout = optarg;
             break;
+#ifndef SS_NG
         case 'm':
             method = optarg;
             break;
         case 'c':
             conf_path = optarg;
             break;
+#endif
         case 'i':
             iface = optarg;
             break;
@@ -1611,6 +1698,7 @@ main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+#ifndef SS_NG
     if (argc == 1) {
         if (conf_path == NULL) {
             conf_path = get_default_conf();
@@ -1690,6 +1778,9 @@ main(int argc, char **argv)
         local_port == NULL ||
 #endif
         (password == NULL && key == NULL)) {
+#else
+    if (local_port == NULL) {
+#endif
         usage();
         exit(EXIT_FAILURE);
     }
@@ -1704,7 +1795,11 @@ main(int argc, char **argv)
             FATAL("failed to find a free port");
         }
         snprintf(tmp_port, 8, "%d", port);
+#ifndef SS_NG
         if (is_ipv6only(remote_addr, remote_num, ipv6first)) {
+#else
+        if (ipv6first) {
+#endif
             plugin_host = "::1";
         } else {
             plugin_host = "127.0.0.1";
@@ -1722,9 +1817,11 @@ main(int argc, char **argv)
         LOGI("plugin \"%s\" enabled", plugin);
     }
 
+#ifndef SS_NG
     if (method == NULL) {
         method = "chacha20-ietf-poly1305";
     }
+#endif
 
     if (timeout == NULL) {
         timeout = "60";
@@ -1744,7 +1841,11 @@ main(int argc, char **argv)
 #endif
 
     if (local_addr == NULL) {
+#ifndef SS_NG
         if (is_ipv6only(remote_addr, remote_num, ipv6first)) {
+#else
+        if (ipv6first) {
+#endif
             local_addr = "::1";
         } else {
             local_addr = "127.0.0.1";
@@ -1807,6 +1908,7 @@ main(int argc, char **argv)
     }
 #endif
 
+#ifndef SS_NG
     if (plugin != NULL) {
         int len          = 0;
         size_t buf_size  = 256 * remote_num;
@@ -1829,6 +1931,7 @@ main(int argc, char **argv)
             FATAL("failed to start the plugin");
         }
     }
+#endif
 
 #ifndef __MINGW32__
     // ignore SIGPIPE
@@ -1836,14 +1939,17 @@ main(int argc, char **argv)
     signal(SIGABRT, SIG_IGN);
 #endif
 
+#ifndef SS_NG
     // Setup keys
     LOGI("initializing ciphers... %s", method);
     crypto = crypto_init(password, key, method);
     if (crypto == NULL)
         FATAL("failed to initialize ciphers");
+#endif
 
     // Setup proxy context
     listen_ctx_t listen_ctx;
+#ifndef SS_NG
     listen_ctx.remote_num  = 0;
     listen_ctx.remote_addr = ss_malloc(sizeof(struct sockaddr *) * remote_num);
     memset(listen_ctx.remote_addr, 0, sizeof(struct sockaddr *) * remote_num);
@@ -1866,6 +1972,7 @@ main(int argc, char **argv)
         if (plugin != NULL)
             break;
     }
+#endif
     listen_ctx.timeout = atoi(timeout);
     listen_ctx.iface   = iface;
     listen_ctx.mptcp   = mptcp;
@@ -1912,6 +2019,7 @@ main(int argc, char **argv)
     // Setup UDP
     if (mode != TCP_ONLY) {
         LOGI("udprelay enabled");
+#ifndef SS_NG
         char *host                       = remote_addr[0].host;
         char *port                       = remote_addr[0].port == NULL ? remote_port : remote_addr[0].port;
         struct sockaddr_storage *storage = ss_malloc(sizeof(struct sockaddr_storage));
@@ -1922,6 +2030,9 @@ main(int argc, char **argv)
         struct sockaddr *addr = (struct sockaddr *)storage;
         udp_fd = init_udprelay(local_addr, local_port, addr,
                                get_sockaddr_len(addr), mtu, crypto, listen_ctx.timeout, iface);
+#else
+        udp_fd = init_udprelay(local_addr, local_port, mtu, listen_ctx.timeout, iface);
+#endif
     }
 
 #ifdef HAVE_LAUNCHD
@@ -1960,9 +2071,11 @@ main(int argc, char **argv)
         ev_io_stop(loop, &listen_ctx.io);
         free_connections(loop);
 
+#ifndef SS_NG
         for (i = 0; i < listen_ctx.remote_num; i++)
             ss_free(listen_ctx.remote_addr[i]);
         ss_free(listen_ctx.remote_addr);
+#endif
     }
 
     if (mode != TCP_ONLY) {

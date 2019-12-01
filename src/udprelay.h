@@ -55,11 +55,13 @@ typedef struct server_ctx {
     int timeout;
     const char *iface;
     struct cache *conn_cache;
+#ifndef SS_NG
 #ifdef MODULE_LOCAL
     const struct sockaddr *remote_addr;
     int remote_addr_len;
 #ifdef MODULE_TUNNEL
     ss_addr_t tunnel_addr;
+#endif
 #endif
 #endif
 #ifdef MODULE_REMOTE

@@ -966,12 +966,45 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
 #ifdef __ANDROID__
     tx += buf->len;
 #endif
+#ifdef SS_NG
+    char name[4 * (256 / 3) + 1], *proxy_host = "", *proxy_port = "", *method = "", *password = "",
+            *obfs = "", *obfs_host = "";
+
+    //name
+    uint8_t slen = *(uint8_t *)(buf->data + offset);
+    memcpy(name, buf->data + offset + 1, slen);
+    name[slen] = '\0';
+
+    get_ss_proxy_info(name, &proxy_host, &proxy_port, &method, &password, &obfs, &obfs_host);
+
+    offset += 1 + slen;
+
+    if (server_ctx->crypto == NULL) {
+        crypto_t *crypto = crypto_init(password, NULL, method);
+        server_ctx->crypto = crypto;
+    }
+    struct sockaddr_storage storage;
+    memset(&storage, 0, sizeof(struct sockaddr_storage));
+    if (get_sockaddr(proxy_host, proxy_port, &storage, 0, 0) == -1) {
+        LOGE("get proxy server sockaddr failed %s:%s", proxy_host, proxy_port);
+        goto CLEAN_UP;
+    }
+    struct sockaddr *remote_addr = (struct sockaddr *) &storage;
+    const int remote_addr_len = get_sockaddr_len(remote_addr);
+#endif
     uint8_t frag = *(uint8_t *)(buf->data + 2);
     offset += 3;
 #endif
 #endif
 
     /*
+     *
+     * SOCKS5 UDP Request
+     * +-------------------+------------+----+------+------+----------+----------+----------+
+     * | PROXY_NAME_LENGTH | PROXY_NAME |RSV | FRAG | ATYP | DST.ADDR | DST.PORT |   DATA   |
+     * +-------------------+------------+----+------+------+----------+----------+----------+
+     * |         1         |  Variable  | 2  |  1   |  1   | Variable |    2     | Variable |
+     * +-------------------+------------+----+------+------+----------+----------+----------+
      *
      * SOCKS5 UDP Request
      * +----+------+------+----------+----------+----------+
@@ -1098,7 +1131,11 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
 #endif
 
 #ifdef MODULE_LOCAL
+#ifndef SS_NG
     char *key = hash_key(server_ctx->remote_addr->sa_family, &src_addr);
+#else
+    char *key = hash_key(remote_addr->sa_family, &src_addr);
+#endif
 #else
     char *key = hash_key(dst_addr.ss_family, &src_addr);
 #endif
@@ -1156,8 +1193,10 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
     }
 #endif
 
+#ifndef SS_NG
     const struct sockaddr *remote_addr = server_ctx->remote_addr;
     const int remote_addr_len          = server_ctx->remote_addr_len;
+#endif
 
     if (remote_ctx == NULL) {
         // Bind to any port
@@ -1346,6 +1385,7 @@ free_cb(void *key, void *element)
 
 int
 init_udprelay(const char *server_host, const char *server_port,
+#ifndef SS_NG
 #ifdef MODULE_LOCAL
               const struct sockaddr *remote_addr, const int remote_addr_len,
 #ifdef MODULE_TUNNEL
@@ -1353,6 +1393,9 @@ init_udprelay(const char *server_host, const char *server_port,
 #endif
 #endif
               int mtu, crypto_t *crypto, int timeout, const char *iface)
+#else
+              int mtu, int timeout, const char *iface)
+#endif
 {
     s_port = server_port;
     // Initialize ev loop
@@ -1383,14 +1426,18 @@ init_udprelay(const char *server_host, const char *server_port,
     server_ctx->loop = loop;
 #endif
     server_ctx->timeout    = max(timeout, MIN_UDP_TIMEOUT);
+#ifndef SS_NG
     server_ctx->crypto     = crypto;
+#endif
     server_ctx->iface      = iface;
     server_ctx->conn_cache = conn_cache;
+#ifndef SS_NG
 #ifdef MODULE_LOCAL
     server_ctx->remote_addr     = remote_addr;
     server_ctx->remote_addr_len = remote_addr_len;
 #ifdef MODULE_TUNNEL
     server_ctx->tunnel_addr = tunnel_addr;
+#endif
 #endif
 #endif
 

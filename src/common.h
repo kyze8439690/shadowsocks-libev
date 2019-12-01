@@ -33,6 +33,7 @@
 #include "crypto.h"
 
 int init_udprelay(const char *server_host, const char *server_port,
+#ifndef SS_NG
 #ifdef MODULE_LOCAL
                   const struct sockaddr *remote_addr, const int remote_addr_len,
 #ifdef MODULE_TUNNEL
@@ -40,12 +41,20 @@ int init_udprelay(const char *server_host, const char *server_port,
 #endif
 #endif
                   int mtu, crypto_t *crypto, int timeout, const char *iface);
+#else
+                  int mtu, int timeout, const char *iface);
+#endif
 
 void free_udprelay(void);
 
 #ifdef __ANDROID__
 int protect_socket(int fd);
 int send_traffic_stat(uint64_t tx, uint64_t rx);
+#endif
+
+#ifdef SS_NG
+int get_ss_proxy_info(char *name, char **proxy_host, char **proxy_port, char **method,
+        char **password, char **obfs, char **obfs_host);
 #endif
 
 #define STAGE_ERROR     -1  /* Error detected                   */

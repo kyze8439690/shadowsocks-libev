@@ -44,11 +44,15 @@
 typedef struct listen_ctx {
     ev_io io;
     char *iface;
+#ifndef SS_NG
     int remote_num;
+#endif
     int timeout;
     int fd;
     int mptcp;
+#ifndef SS_NG
     struct sockaddr **remote_addr;
+#endif
 } listen_ctx_t;
 
 typedef struct server_ctx {
@@ -60,6 +64,10 @@ typedef struct server_ctx {
 typedef struct server {
     int fd;
     int stage;
+
+#ifdef SS_NG
+    crypto_t *crypto;
+#endif
 
     cipher_ctx_t *e_ctx;
     cipher_ctx_t *d_ctx;

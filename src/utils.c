@@ -512,6 +512,7 @@ set_nofile(int nofile)
 
 #endif
 
+#ifndef SS_NG
 char *
 get_default_conf(void)
 {
@@ -551,3 +552,4 @@ get_default_conf(void)
     return "config.json";
 #endif
 }
+#endif
