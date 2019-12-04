@@ -991,8 +991,10 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
     }
     struct sockaddr *remote_addr = (struct sockaddr *) &storage;
     const int remote_addr_len = get_sockaddr_len(remote_addr);
-#endif
+    uint8_t frag = *(uint8_t *)(buf->data + offset + 2);
+#else
     uint8_t frag = *(uint8_t *)(buf->data + 2);
+#endif
     offset += 3;
 #endif
 #endif
