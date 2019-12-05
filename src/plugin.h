@@ -64,9 +64,11 @@ enum plugin_mode {
  *   Indicates which mode the plugin should run at.
  */
 int start_plugin(const char *plugin,
+#ifndef SS_NG
                  const char *plugin_opts,
                  const char *remote_host,
                  const char *remote_port,
+#endif
                  const char *local_host,
                  const char *local_port,
 #ifdef __MINGW32__

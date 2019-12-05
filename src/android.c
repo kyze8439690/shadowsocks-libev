@@ -151,7 +151,7 @@ int get_ss_proxy_info(char *name, char **proxy_host, char **proxy_port, char **m
 
     SSProxyResult *result = ssproxy_result__unpack(NULL, (size_t) result_len, result_buf);
     if (result == NULL || !result->success) {
-        LOGE("[android] get_proxy() failed for unpack: %s (socket fd = %d)\n", strerror(errno), sock);
+        LOGE("[android] get_proxy() failed for unpack: (socket fd = %d)\n",  sock);
         close(sock);
         if (result != NULL) {
             ssproxy_result__free_unpacked(result, NULL);

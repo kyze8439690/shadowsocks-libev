@@ -94,21 +94,27 @@ struct cork_stream_consumer plugin_log = {
 
 static int
 start_ss_plugin(const char *plugin,
+#ifndef SS_NG
                 const char *plugin_opts,
                 const char *remote_host,
                 const char *remote_port,
+#endif
                 const char *local_host,
                 const char *local_port,
                 enum plugin_mode mode)
 {
+#ifndef SS_NG
     cork_env_add(env, "SS_REMOTE_HOST", remote_host);
     cork_env_add(env, "SS_REMOTE_PORT", remote_port);
+#endif
 
     cork_env_add(env, "SS_LOCAL_HOST", local_host);
     cork_env_add(env, "SS_LOCAL_PORT", local_port);
 
+#ifndef SS_NG
     if (plugin_opts != NULL)
         cork_env_add(env, "SS_PLUGIN_OPTIONS", plugin_opts);
+#endif
 
     exec = cork_exec_new(plugin);
     cork_exec_add_param(exec, plugin);  // argv[0]
@@ -129,6 +135,7 @@ start_ss_plugin(const char *plugin,
     return cork_subprocess_start(sub);
 }
 
+#ifndef SS_NG
 #define OBFSPROXY_OPTS_MAX  4096
 /*
  * For obfsproxy, we use standalone mode for now.
@@ -233,12 +240,15 @@ start_obfsproxy(const char *plugin,
     free(buf);
     return ret;
 }
+#endif
 
 int
 start_plugin(const char *plugin,
+#ifndef SS_NG
              const char *plugin_opts,
              const char *remote_host,
              const char *remote_port,
+#endif
              const char *local_host,
              const char *local_port,
 #ifdef __MINGW32__
@@ -287,12 +297,16 @@ start_plugin(const char *plugin,
     sub_control_port = control_port;
 #endif
 
+#ifndef SS_NG
     if (!strncmp(plugin, "obfsproxy", strlen("obfsproxy")))
         ret = start_obfsproxy(plugin, plugin_opts, remote_host, remote_port,
                               local_host, local_port, mode);
     else
         ret = start_ss_plugin(plugin, plugin_opts, remote_host, remote_port,
                               local_host, local_port, mode);
+#else
+    ret = start_ss_plugin(plugin, local_host, local_port, mode);
+#endif
 #ifndef __MINGW32__
     ss_free(new_path);
 #endif

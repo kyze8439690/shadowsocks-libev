@@ -67,6 +67,8 @@ typedef struct server {
 
 #ifdef SS_NG
     crypto_t *crypto;
+    int obfs;
+    char proxy_name[4 * (256 / 3) + 1];
 #endif
 
     cipher_ctx_t *e_ctx;
@@ -94,7 +96,9 @@ typedef struct remote_ctx {
 
 typedef struct remote {
     int fd;
+#ifndef SS_NG
     int direct;
+#endif
     int addr_len;
     uint32_t counter;
 #ifdef TCP_FASTOPEN_WINSOCK

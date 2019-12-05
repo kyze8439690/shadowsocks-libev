@@ -96,6 +96,8 @@ char *stat_path = NULL;
 static crypto_t *crypto;
 
 static int acl       = 0;
+#else
+static struct sockaddr_storage plugin_addr;
 #endif
 static int mode      = TCP_ONLY;
 static int ipv6first = 0;
@@ -614,24 +616,30 @@ not_bypass:
 #else
 
     int skip_len = 0;
-    char name[4 * (256 / 3) + 1], *proxy_host = "", *proxy_port = "", *method = "", *password = "",
+    char *proxy_host = "", *proxy_port = "", *method = "", *password = "",
     *obfs = "", *obfs_host = "";
 
     //name
+    memset(server->proxy_name, 0, strlen(server->proxy_name));
     uint8_t slen = *(uint8_t *)(buf->data + skip_len);
-    memcpy(name, buf->data + skip_len + 1, slen);
-    name[slen] = '\0';
+    memcpy(server->proxy_name, buf->data + skip_len + 1, slen);
+    server->proxy_name[slen] = '\0';
     skip_len += 1 + slen;
 
-    get_ss_proxy_info(name, &proxy_host, &proxy_port, &method, &password, &obfs, &obfs_host);
+    get_ss_proxy_info(server->proxy_name, &proxy_host, &proxy_port, &method, &password, &obfs, &obfs_host);
 
     buf->len -= skip_len;
     memmove(buf->data, buf->data + skip_len, buf->len);
 
-    struct sockaddr_storage storage;
-    memset(&storage, 0, sizeof(struct sockaddr_storage));
-    if (get_sockaddr(proxy_host, proxy_port, &storage, 0, ipv6first) != -1) {
-        remote = create_remote(server->listener, (struct sockaddr *)&storage, 0);
+    if (strlen(obfs)) {
+        server->obfs = 1;
+        remote = create_remote(server->listener, (struct sockaddr *) &plugin_addr, 0);
+    } else {
+        struct sockaddr_storage storage;
+        memset(&storage, 0, sizeof(struct sockaddr_storage));
+        if (get_sockaddr(proxy_host, proxy_port, &storage, 0, ipv6first) != -1) {
+            remote = create_remote(server->listener, (struct sockaddr *) &storage, 0);
+        }
     }
 
     crypto_t *crypto = crypto_init(password, NULL, method);
@@ -648,7 +656,11 @@ not_bypass:
         return -1;
     }
 
+#ifndef SS_NG
     if (!remote->direct) {
+#else
+    {
+#endif
         int err = crypto->encrypt(abuf, server->e_ctx, SOCKET_BUF_SIZE);
         if (err) {
             LOGE("invalid password or cipher");
@@ -689,7 +701,11 @@ server_stream(EV_P_ ev_io *w, buffer_t *buf)
     }
 
     // insert shadowsocks header
+#ifndef SS_NG
     if (!remote->direct) {
+#else
+    {
+#endif
 #ifdef __ANDROID__
         tx += remote->buf->len;
 #endif
@@ -735,7 +751,11 @@ server_stream(EV_P_ ev_io *w, buffer_t *buf)
 
         remote->buf->idx = 0;
 
+#ifndef SS_NG
         if (!fast_open || remote->direct) {
+#else
+        if (!fast_open) {
+#endif
             // connecting, wait until connected
             int r = connect(remote->fd, (struct sockaddr *)&(remote->addr), remote->addr_len);
 
@@ -1078,7 +1098,11 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
 
     server->buf->len = r;
 
+#ifndef SS_NG
     if (!remote->direct) {
+#else
+    {
+#endif
 #ifdef __ANDROID__
         rx += server->buf->len;
         stat_update_cb();
@@ -1196,6 +1220,18 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
         return;
     } else {
         // has data to send
+#ifdef SS_NG
+        if (server->obfs) {
+            size_t slen = strlen(server->proxy_name);
+            uint8_t *header = ss_malloc(1 + slen);
+            memcpy(header, &slen, 1);
+            memcpy(header + 1, server->proxy_name, slen);
+            sendto(remote->fd, header, 1 + slen, MSG_FASTOPEN,
+                   (struct sockaddr *)&(remote->addr), remote->addr_len);
+            ss_free(header);
+            server->obfs = 0;
+        }
+#endif
         ssize_t s = send(remote->fd, remote->buf->data + remote->buf->idx,
                          remote->buf->len, 0);
         if (s == -1) {
@@ -1304,6 +1340,8 @@ new_server(int fd)
     server->d_ctx = ss_malloc(sizeof(cipher_ctx_t));
     crypto->ctx_init(crypto->cipher, server->e_ctx, 1);
     crypto->ctx_init(crypto->cipher, server->d_ctx, 0);
+#else
+    server->obfs = 0;
 #endif
 
     ev_io_init(&server->recv_ctx->io, server_recv_cb, fd, EV_READ);
@@ -1426,7 +1464,9 @@ create_remote(listen_ctx_t *listener,
     remote_t *remote = new_remote(remotefd, direct ? MAX_CONNECT_TIMEOUT : listener->timeout);
     remote->addr_len = get_sockaddr_len(remote_addr);
     memcpy(&(remote->addr), remote_addr, remote->addr_len);
+#ifndef SS_NG
     remote->direct = direct;
+#endif
 
     return remote;
 }
@@ -1531,7 +1571,9 @@ main(int argc, char **argv)
     char *iface      = NULL;
 
     char *plugin      = NULL;
+#ifndef SS_NG
     char *plugin_opts = NULL;
+#endif
     char *plugin_host = NULL;
     char *plugin_port = NULL;
     char tmp_port[8];
@@ -1593,10 +1635,10 @@ main(int argc, char **argv)
             no_delay = 1;
             LOGI("enable TCP no-delay");
             break;
-#ifndef SS_NG
         case GETOPT_VAL_PLUGIN:
             plugin = optarg;
             break;
+#ifndef SS_NG
         case GETOPT_VAL_PLUGIN_OPTS:
             plugin_opts = optarg;
             break;
@@ -1805,6 +1847,12 @@ main(int argc, char **argv)
             plugin_host = "127.0.0.1";
         }
         plugin_port = tmp_port;
+#ifdef SS_NG
+        memset(&plugin_addr, 0, sizeof(struct sockaddr_storage));
+        if (get_sockaddr(plugin_host, plugin_port, &plugin_addr, 1, ipv6first) == -1) {
+            FATAL("failed to resolve the provided hostname");
+        }
+#endif
 
 #ifdef __MINGW32__
         memset(&plugin_watcher, 0, sizeof(plugin_watcher));
@@ -1908,8 +1956,8 @@ main(int argc, char **argv)
     }
 #endif
 
-#ifndef SS_NG
     if (plugin != NULL) {
+#ifndef SS_NG
         int len          = 0;
         size_t buf_size  = 256 * remote_num;
         char *remote_str = ss_malloc(buf_size);
@@ -1922,6 +1970,9 @@ main(int argc, char **argv)
         }
         int err = start_plugin(plugin, plugin_opts, remote_str,
                                remote_port, plugin_host, plugin_port,
+#else
+        int err = start_plugin(plugin, plugin_host, plugin_port,
+#endif
 #ifdef __MINGW32__
                                plugin_watcher.port,
 #endif
@@ -1931,7 +1982,6 @@ main(int argc, char **argv)
             FATAL("failed to start the plugin");
         }
     }
-#endif
 
 #ifndef __MINGW32__
     // ignore SIGPIPE
