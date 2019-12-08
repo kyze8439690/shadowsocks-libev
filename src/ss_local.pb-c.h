@@ -28,10 +28,12 @@ struct  _SSProxyRequest
 {
   ProtobufCMessage base;
   char *name;
+  protobuf_c_boolean speed_test;
+  protobuf_c_boolean from_obfs;
 };
 #define SSPROXY_REQUEST__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&ssproxy_request__descriptor) \
-    , NULL }
+    , NULL, 0, 0 }
 
 
 struct  _SSProxyResult

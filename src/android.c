@@ -100,7 +100,7 @@ protect_socket(int fd)
 #define MAX_MSG_SIZE 1024
 
 int get_ss_proxy_info(char *name, char **proxy_host, char **proxy_port, char **method,
-                       char **password, char **obfs, char **obfs_host) {
+        char **password, char **obfs, char **obfs_host, int speedTest) {
     int sock;
     struct sockaddr_un addr;
 
@@ -130,6 +130,8 @@ int get_ss_proxy_info(char *name, char **proxy_host, char **proxy_port, char **m
 
     SSProxyRequest request = SSPROXY_REQUEST__INIT;
     request.name = name;
+    request.speed_test = speedTest;
+    request.from_obfs = 0;
     unsigned request_len = ssproxy_request__get_packed_size(&request);
     void *request_buf = ss_malloc(request_len);
     ssproxy_request__pack(&request, request_buf);

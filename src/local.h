@@ -69,6 +69,7 @@ typedef struct server {
     crypto_t *crypto;
     int obfs;
     char proxy_name[4 * (256 / 3) + 1];
+    int speed_test;
 #endif
 
     cipher_ctx_t *e_ctx;

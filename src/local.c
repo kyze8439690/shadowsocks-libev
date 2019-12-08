@@ -615,18 +615,19 @@ not_bypass:
     }
 #else
 
-    int skip_len = 0;
     char *proxy_host = "", *proxy_port = "", *method = "", *password = "",
     *obfs = "", *obfs_host = "";
 
     //name
     memset(server->proxy_name, 0, strlen(server->proxy_name));
-    uint8_t slen = *(uint8_t *)(buf->data + skip_len);
-    memcpy(server->proxy_name, buf->data + skip_len + 1, slen);
+    uint8_t slen = *(uint8_t *)(buf->data);
+    memcpy(server->proxy_name, buf->data + 1, slen);
     server->proxy_name[slen] = '\0';
-    skip_len += 1 + slen;
+    server->speed_test = *(buf->data + 1 + slen);
+    int skip_len = 1 + slen + 1;
 
-    get_ss_proxy_info(server->proxy_name, &proxy_host, &proxy_port, &method, &password, &obfs, &obfs_host);
+    get_ss_proxy_info(server->proxy_name, &proxy_host, &proxy_port, &method, &password, &obfs,
+            &obfs_host, server->speed_test);
 
     buf->len -= skip_len;
     memmove(buf->data, buf->data + skip_len, buf->len);
@@ -1223,10 +1224,11 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
 #ifdef SS_NG
         if (server->obfs) {
             size_t slen = strlen(server->proxy_name);
-            uint8_t *header = ss_malloc(1 + slen);
+            uint8_t *header = ss_malloc(1 + slen + 1);
             memcpy(header, &slen, 1);
             memcpy(header + 1, server->proxy_name, slen);
-            sendto(remote->fd, header, 1 + slen, MSG_FASTOPEN,
+            memcpy(header + 1 + slen, &server->speed_test, 1);
+            sendto(remote->fd, header, 1 + slen + 1, MSG_FASTOPEN,
                    (struct sockaddr *)&(remote->addr), remote->addr_len);
             ss_free(header);
             server->obfs = 0;
@@ -1342,6 +1344,7 @@ new_server(int fd)
     crypto->ctx_init(crypto->cipher, server->d_ctx, 0);
 #else
     server->obfs = 0;
+    server->speed_test = 0;
 #endif
 
     ev_io_init(&server->recv_ctx->io, server_recv_cb, fd, EV_READ);

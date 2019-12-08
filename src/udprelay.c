@@ -975,7 +975,7 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
     memcpy(name, buf->data + offset + 1, slen);
     name[slen] = '\0';
 
-    get_ss_proxy_info(name, &proxy_host, &proxy_port, &method, &password, &obfs, &obfs_host);
+    get_ss_proxy_info(name, &proxy_host, &proxy_port, &method, &password, &obfs, &obfs_host, 0);
 
     offset += 1 + slen;
 

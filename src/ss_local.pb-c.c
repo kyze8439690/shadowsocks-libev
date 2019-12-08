@@ -97,7 +97,7 @@ void   ssproxy_result__free_unpacked
   assert(message->base.descriptor == &ssproxy_result__descriptor);
   protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
 }
-static const ProtobufCFieldDescriptor ssproxy_request__field_descriptors[1] =
+static const ProtobufCFieldDescriptor ssproxy_request__field_descriptors[3] =
 {
   {
     "name",
@@ -111,14 +111,40 @@ static const ProtobufCFieldDescriptor ssproxy_request__field_descriptors[1] =
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "speed_test",
+    2,
+    PROTOBUF_C_LABEL_REQUIRED,
+    PROTOBUF_C_TYPE_BOOL,
+    0,   /* quantifier_offset */
+    offsetof(SSProxyRequest, speed_test),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "from_obfs",
+    3,
+    PROTOBUF_C_LABEL_REQUIRED,
+    PROTOBUF_C_TYPE_BOOL,
+    0,   /* quantifier_offset */
+    offsetof(SSProxyRequest, from_obfs),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned ssproxy_request__field_indices_by_name[] = {
+  2,   /* field[2] = from_obfs */
   0,   /* field[0] = name */
+  1,   /* field[1] = speed_test */
 };
 static const ProtobufCIntRange ssproxy_request__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 1 }
+  { 0, 3 }
 };
 const ProtobufCMessageDescriptor ssproxy_request__descriptor =
 {
@@ -128,7 +154,7 @@ const ProtobufCMessageDescriptor ssproxy_request__descriptor =
   "SSProxyRequest",
   "",
   sizeof(SSProxyRequest),
-  1,
+  3,
   ssproxy_request__field_descriptors,
   ssproxy_request__field_indices_by_name,
   1,  ssproxy_request__number_ranges,
