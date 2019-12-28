@@ -99,8 +99,8 @@ protect_socket(int fd)
 #ifdef SS_NG
 #define MAX_MSG_SIZE 1024
 
-int get_ss_proxy_info(char *name, char **proxy_host, char **proxy_port, char **method,
-        char **password, char **obfs, char **obfs_host, int speedTest) {
+int get_ss_proxy_info(char *name, char *proxy_host, char *proxy_port, char *method,
+        char *password, char *obfs, char *obfs_host, int speedTest) {
     int sock;
     struct sockaddr_un addr;
 
@@ -161,12 +161,12 @@ int get_ss_proxy_info(char *name, char **proxy_host, char **proxy_port, char **m
         return -1;
     }
 
-    *proxy_host = result->host;
-    *proxy_port = result->port;
-    *method = result->method;
-    *password = result->password;
-    *obfs = result->obfs;
-    *obfs_host = result->obfshost;
+    strcpy(proxy_host, result->host);
+    strcpy(proxy_port, result->port);
+    strcpy(method, result->method);
+    strcpy(password, result->password);
+    strcpy(obfs, result->obfs);
+    strcpy(obfs_host, result->obfshost);
 
     ssproxy_result__free_unpacked(result, NULL);
     return 0;

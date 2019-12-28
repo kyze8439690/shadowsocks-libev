@@ -53,8 +53,8 @@ int send_traffic_stat(uint64_t tx, uint64_t rx);
 #endif
 
 #ifdef SS_NG
-int get_ss_proxy_info(char *name, char **proxy_host, char **proxy_port, char **method,
-        char **password, char **obfs, char **obfs_host, int speedTest);
+int get_ss_proxy_info(char *name, char *proxy_host, char *proxy_port, char *method,
+        char *password, char *obfs, char *obfs_host, int speedTest);
 #endif
 
 #define STAGE_ERROR     -1  /* Error detected                   */

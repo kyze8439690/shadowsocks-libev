@@ -967,15 +967,20 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
     tx += buf->len;
 #endif
 #ifdef SS_NG
-    char name[4 * (256 / 3) + 1], *proxy_host = "", *proxy_port = "", *method = "", *password = "",
-            *obfs = "", *obfs_host = "";
+    char name[4 * (256 / 3) + 1];
+    char proxy_host[MAX_HOSTNAME_LEN];
+    char proxy_port[MAX_PORT_STR_LEN];
+    char method[24];
+    char password[101];
+    char obfs[5];
+    char obfs_host[MAX_HOSTNAME_LEN];
 
     //name
     uint8_t slen = *(uint8_t *)(buf->data + offset);
     memcpy(name, buf->data + offset + 1, slen);
     name[slen] = '\0';
 
-    get_ss_proxy_info(name, &proxy_host, &proxy_port, &method, &password, &obfs, &obfs_host, 0);
+    get_ss_proxy_info(name, proxy_host, proxy_port, method, password, obfs, obfs_host, 0);
 
     offset += 1 + slen;
 

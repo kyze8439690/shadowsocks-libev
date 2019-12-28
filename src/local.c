@@ -615,8 +615,12 @@ not_bypass:
     }
 #else
 
-    char *proxy_host = "", *proxy_port = "", *method = "", *password = "",
-    *obfs = "", *obfs_host = "";
+    char proxy_host[MAX_HOSTNAME_LEN];
+    char proxy_port[MAX_PORT_STR_LEN];
+    char method[24];
+    char password[101];
+    char obfs[5];
+    char obfs_host[MAX_HOSTNAME_LEN];
 
     //name
     memset(server->proxy_name, 0, strlen(server->proxy_name));
@@ -626,8 +630,8 @@ not_bypass:
     server->speed_test = *(buf->data + 1 + slen);
     int skip_len = 1 + slen + 1;
 
-    get_ss_proxy_info(server->proxy_name, &proxy_host, &proxy_port, &method, &password, &obfs,
-            &obfs_host, server->speed_test);
+    get_ss_proxy_info(server->proxy_name, proxy_host, proxy_port, method, password, obfs,
+            obfs_host, server->speed_test);
 
     buf->len -= skip_len;
     memmove(buf->data, buf->data + skip_len, buf->len);
@@ -644,6 +648,11 @@ not_bypass:
     }
 
     crypto_t *crypto = crypto_init(password, NULL, method);
+    if (crypto == NULL) {
+        LOGE("crypto_init failed");
+        close_and_free_server(EV_A_ server);
+        return -1;
+    }
     server->crypto = crypto;
     server->e_ctx = ss_malloc(sizeof(cipher_ctx_t));
     server->d_ctx = ss_malloc(sizeof(cipher_ctx_t));
