@@ -43,7 +43,7 @@
 #endif
 
 #ifdef SS_NG
-#include "ss_local.pb-c.h"
+#include "protobuf/surfboard.pb-c.h"
 #endif
 
 #include "netutils.h"
