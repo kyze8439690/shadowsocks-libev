@@ -1445,6 +1445,7 @@ create_remote(listen_ctx_t *listener,
     setsockopt(remotefd, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
 #endif
 
+#ifndef SS_NG
     if (listener->mptcp > 1) {
         int err = setsockopt(remotefd, SOL_TCP, listener->mptcp, &opt, sizeof(opt));
         if (err == -1) {
@@ -1463,6 +1464,7 @@ create_remote(listen_ctx_t *listener,
             ERROR("failed to enable multipath TCP");
         }
     }
+#endif
 
     // Setup
     setnonblocking(remotefd);
@@ -1564,7 +1566,9 @@ main(int argc, char **argv)
     int i, c;
     int pid_flags    = 0;
     int mtu          = 0;
+#ifndef SS_NG
     int mptcp        = 0;
+#endif
     char *user       = NULL;
     char *local_port = NULL;
     char *local_addr = NULL;
@@ -1639,10 +1643,12 @@ main(int argc, char **argv)
             mtu = atoi(optarg);
             LOGI("set MTU to %d", mtu);
             break;
+#ifndef SS_NG
         case GETOPT_VAL_MPTCP:
             mptcp = 1;
             LOGI("enable multipath TCP");
             break;
+#endif
         case GETOPT_VAL_NODELAY:
             no_delay = 1;
             LOGI("enable TCP no-delay");
@@ -2037,7 +2043,9 @@ main(int argc, char **argv)
 #endif
     listen_ctx.timeout = atoi(timeout);
     listen_ctx.iface   = iface;
+#ifndef SS_NG
     listen_ctx.mptcp   = mptcp;
+#endif
 
     // Setup signal handler
     ev_signal_init(&sigint_watcher, signal_cb, SIGINT);
