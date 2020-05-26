@@ -60,6 +60,9 @@
 #include "plugin.h"
 #include "local.h"
 #include "winsock.h"
+#include "obfs.h"
+#include "obfs_http.h"
+#include "obfs_tls.h"
 
 #ifndef LIB_ONLY
 #ifdef __APPLE__
@@ -96,7 +99,6 @@ char *stat_path = NULL;
 static crypto_t *crypto;
 
 static int acl       = 0;
-#else
 static struct sockaddr_storage plugin_addr;
 #endif
 static int mode      = TCP_ONLY;
@@ -615,6 +617,7 @@ not_bypass:
     }
 #else
 
+    char proxy_name[4 * (256 / 3) + 1];
     char proxy_host[MAX_HOSTNAME_LEN];
     char proxy_port[MAX_PORT_STR_LEN];
     char method[24];
@@ -623,28 +626,23 @@ not_bypass:
     char obfs_host[MAX_HOSTNAME_LEN];
 
     //name
-    memset(server->proxy_name, 0, strlen(server->proxy_name));
+    memset(proxy_name, 0, strlen(proxy_name));
     uint8_t slen = *(uint8_t *)(buf->data);
-    memcpy(server->proxy_name, buf->data + 1, slen);
-    server->proxy_name[slen] = '\0';
+    memcpy(proxy_name, buf->data + 1, slen);
+    proxy_name[slen] = '\0';
     server->speed_test = *(buf->data + 1 + slen);
     int skip_len = 1 + slen + 1;
 
-    get_ss_proxy_info(server->proxy_name, proxy_host, proxy_port, method, password, obfs,
+    get_ss_proxy_info(proxy_name, proxy_host, proxy_port, method, password, obfs,
             obfs_host, server->speed_test);
 
     buf->len -= skip_len;
     memmove(buf->data, buf->data + skip_len, buf->len);
 
-    if (strlen(obfs)) {
-        server->obfs = 1;
-        remote = create_remote(server->listener, (struct sockaddr *) &plugin_addr, 0);
-    } else {
-        struct sockaddr_storage storage;
-        memset(&storage, 0, sizeof(struct sockaddr_storage));
-        if (get_sockaddr(proxy_host, proxy_port, &storage, 0, ipv6first) != -1) {
-            remote = create_remote(server->listener, (struct sockaddr *) &storage, 0);
-        }
+    struct sockaddr_storage storage;
+    memset(&storage, 0, sizeof(struct sockaddr_storage));
+    if (get_sockaddr(proxy_host, proxy_port, &storage, 0, ipv6first) != -1) {
+        remote = create_remote(server->listener, (struct sockaddr *) &storage, 0);
     }
 
     crypto_t *crypto = crypto_init(password, NULL, method);
@@ -658,6 +656,49 @@ not_bypass:
     server->d_ctx = ss_malloc(sizeof(cipher_ctx_t));
     crypto->ctx_init(crypto->cipher, server->e_ctx, 1);
     crypto->ctx_init(crypto->cipher, server->d_ctx, 0);
+
+    if (strcmp(obfs, "http") == 0) {
+        server->obfs_para = ss_malloc(sizeof(obfs_para_t));
+        server->obfs_para->name = "http";
+        server->obfs_para->host = ss_malloc(strlen(obfs_host) + 1);
+        strcpy(server->obfs_para->host, obfs_host);
+        server->obfs_para->uri = "/";
+        server->obfs_para->port = 80;
+        server->obfs_para->send_empty_response_upon_connection = true;
+        server->obfs_para->obfs_request = &obfs_http_request;
+        server->obfs_para->obfs_response = &obfs_http_response;
+        server->obfs_para->deobfs_request = &deobfs_http_header;
+        server->obfs_para->deobfs_response = &deobfs_http_header;
+        server->obfs_para->check_obfs = &check_http_header;
+        server->obfs_para->disable = &disable_http;
+        server->obfs_para->is_enable = &is_enable_http;
+
+        LOGI("http obfuscating enabled: %s %s", server->obfs_para->name, server->obfs_para->host);
+    } else if (strcmp(obfs, "tls") == 0) {
+        server->obfs_para = ss_malloc(sizeof(obfs_para_t));
+        server->obfs_para->name = "tls";
+        server->obfs_para->host = ss_malloc(strlen(obfs_host) + 1);
+        strcpy(server->obfs_para->host, obfs_host);
+        server->obfs_para->uri = "/";
+        server->obfs_para->port = 443;
+        server->obfs_para->send_empty_response_upon_connection = false;
+        server->obfs_para->obfs_request = &obfs_tls_request;
+        server->obfs_para->obfs_response = &obfs_tls_response;
+        server->obfs_para->deobfs_request = &deobfs_tls_request;
+        server->obfs_para->deobfs_response = &deobfs_tls_response;
+        server->obfs_para->check_obfs = &check_tls_request;
+        server->obfs_para->disable = &disable_tls;
+        server->obfs_para->is_enable = &is_enable_tls;
+
+        LOGI("tls obfuscating enabled: %s %s", server->obfs_para->name, server->obfs_para->host);
+    } else {
+        server->obfs_para = NULL;
+    }
+
+    if (server->obfs_para != NULL) {
+        server->obfs = (obfs_t *)ss_malloc(sizeof(obfs_t));
+        memset(server->obfs, 0, sizeof(obfs_t));
+    }
 #endif
 
     if (remote == NULL) {
@@ -737,6 +778,12 @@ server_stream(EV_P_ ev_io *w, buffer_t *buf)
             ss_free(server->abuf);
             server->abuf = NULL;
         }
+
+#ifdef SS_NG
+        obfs_para_t *obfs_para = server->obfs_para;
+        if (obfs_para)
+            obfs_para->obfs_request(remote->buf, SOCKET_BUF_SIZE, server->obfs, obfs_para);
+#endif
     }
 
     if (!remote->send_ctx->connected) {
@@ -1118,6 +1165,16 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
         stat_update_cb();
 #endif
 #ifdef SS_NG
+        obfs_para_t *obfs_para = server->obfs_para;
+        if (obfs_para) {
+            if (obfs_para->deobfs_response(server->buf, SOCKET_BUF_SIZE, server->obfs, obfs_para)) {
+                LOGE("invalid obfuscating");
+                close_and_free_remote(EV_A_ remote);
+                close_and_free_server(EV_A_ server);
+                return;
+            }
+        }
+
         crypto_t *crypto = server->crypto;
 #endif
         int err = crypto->decrypt(server->buf, server->d_ctx, SOCKET_BUF_SIZE);
@@ -1230,19 +1287,6 @@ remote_send_cb(EV_P_ ev_io *w, int revents)
         return;
     } else {
         // has data to send
-#ifdef SS_NG
-        if (server->obfs) {
-            size_t slen = strlen(server->proxy_name);
-            uint8_t *header = ss_malloc(1 + slen + 1);
-            memcpy(header, &slen, 1);
-            memcpy(header + 1, server->proxy_name, slen);
-            memcpy(header + 1 + slen, &server->speed_test, 1);
-            sendto(remote->fd, header, 1 + slen + 1, MSG_FASTOPEN,
-                   (struct sockaddr *)&(remote->addr), remote->addr_len);
-            ss_free(header);
-            server->obfs = 0;
-        }
-#endif
         ssize_t s = send(remote->fd, remote->buf->data + remote->buf->idx,
                          remote->buf->len, 0);
         if (s == -1) {
@@ -1352,7 +1396,9 @@ new_server(int fd)
     crypto->ctx_init(crypto->cipher, server->e_ctx, 1);
     crypto->ctx_init(crypto->cipher, server->d_ctx, 0);
 #else
-    server->obfs = 0;
+    server->crypto = NULL;
+    server->obfs = NULL;
+    server->obfs_para = NULL;
     server->speed_test = 0;
 #endif
 
@@ -1372,6 +1418,17 @@ free_server(server_t *server)
 {
     cork_dllist_remove(&server->entries);
 #ifdef SS_NG
+    if (server->obfs != NULL) {
+        bfree(server->obfs->buf);
+        if (server->obfs->extra != NULL)
+        ss_free(server->obfs->extra);
+        ss_free(server->obfs);
+    }
+    if (server->obfs_para != NULL) {
+        free(server->obfs_para->host);
+        ss_free(server->obfs_para);
+    }
+
     crypto_t *crypto = server->crypto;
 #endif
 
@@ -1586,15 +1643,13 @@ main(int argc, char **argv)
 #endif
     char *iface      = NULL;
 
-    char *plugin      = NULL;
 #ifndef SS_NG
+    char *plugin      = NULL;
     char *plugin_opts = NULL;
-#endif
     char *plugin_host = NULL;
     char *plugin_port = NULL;
     char tmp_port[8];
 
-#ifndef SS_NG
     int remote_num = 0;
     ss_addr_t remote_addr[MAX_REMOTE_NUM];
     char *remote_port = NULL;
@@ -1653,10 +1708,10 @@ main(int argc, char **argv)
             no_delay = 1;
             LOGI("enable TCP no-delay");
             break;
+#ifndef SS_NG
         case GETOPT_VAL_PLUGIN:
             plugin = optarg;
             break;
-#ifndef SS_NG
         case GETOPT_VAL_PLUGIN_OPTS:
             plugin_opts = optarg;
             break;
@@ -1849,28 +1904,19 @@ main(int argc, char **argv)
     winsock_init();
 #endif
 
+#ifndef SS_NG
     if (plugin != NULL) {
         uint16_t port = get_local_port();
         if (port == 0) {
             FATAL("failed to find a free port");
         }
         snprintf(tmp_port, 8, "%d", port);
-#ifndef SS_NG
         if (is_ipv6only(remote_addr, remote_num, ipv6first)) {
-#else
-        if (ipv6first) {
-#endif
             plugin_host = "::1";
         } else {
             plugin_host = "127.0.0.1";
         }
         plugin_port = tmp_port;
-#ifdef SS_NG
-        memset(&plugin_addr, 0, sizeof(struct sockaddr_storage));
-        if (get_sockaddr(plugin_host, plugin_port, &plugin_addr, 1, ipv6first) == -1) {
-            FATAL("failed to resolve the provided hostname");
-        }
-#endif
 
 #ifdef __MINGW32__
         memset(&plugin_watcher, 0, sizeof(plugin_watcher));
@@ -1883,7 +1929,6 @@ main(int argc, char **argv)
         LOGI("plugin \"%s\" enabled", plugin);
     }
 
-#ifndef SS_NG
     if (method == NULL) {
         method = "chacha20-ietf-poly1305";
     }
@@ -1974,8 +2019,8 @@ main(int argc, char **argv)
     }
 #endif
 
-    if (plugin != NULL) {
 #ifndef SS_NG
+    if (plugin != NULL) {
         int len          = 0;
         size_t buf_size  = 256 * remote_num;
         char *remote_str = ss_malloc(buf_size);
@@ -1988,9 +2033,6 @@ main(int argc, char **argv)
         }
         int err = start_plugin(plugin, plugin_opts, remote_str,
                                remote_port, plugin_host, plugin_port,
-#else
-        int err = start_plugin(plugin, plugin_host, plugin_port,
-#endif
 #ifdef __MINGW32__
                                plugin_watcher.port,
 #endif
@@ -2000,6 +2042,7 @@ main(int argc, char **argv)
             FATAL("failed to start the plugin");
         }
     }
+#endif
 
 #ifndef __MINGW32__
     // ignore SIGPIPE
@@ -2132,10 +2175,12 @@ main(int argc, char **argv)
         LOGI("closed gracefully");
     }
 
+#ifndef SS_NG
     // Clean up
     if (plugin != NULL) {
         stop_plugin();
     }
+#endif
 
     if (mode != UDP_ONLY) {
         ev_io_stop(loop, &listen_ctx.io);

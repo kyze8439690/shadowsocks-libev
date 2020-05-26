@@ -40,6 +40,7 @@
 #include "protocol.h"
 
 #include "common.h"
+#include "obfs.h"
 
 typedef struct listen_ctx {
     ev_io io;
@@ -67,9 +68,10 @@ typedef struct server {
 
 #ifdef SS_NG
     crypto_t *crypto;
-    int obfs;
-    char proxy_name[4 * (256 / 3) + 1];
     int speed_test;
+
+    obfs_t *obfs;
+    obfs_para_t *obfs_para;
 #endif
 
     cipher_ctx_t *e_ctx;
